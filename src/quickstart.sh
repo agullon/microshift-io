@@ -70,7 +70,8 @@ function prepare_lvm_disk() {
         ${machine_ssh} "
             sudo mkdir -p '${lvm_dir}'
             if [ -f '${lvm_disk}' ]; then
-                echo 'INFO: LVM disk already exists, reusing'
+                echo 'INFO: LVM disk already exists. Clearing and reusing it.'
+                sudo dd if=/dev/zero of='${lvm_disk}' bs=1M count=100 >/dev/null
             else
                 sudo truncate --size=1G '${lvm_disk}'
             fi
@@ -106,7 +107,9 @@ function run_bootc_image() {
     # - If the TopoLVM CSI driver is used (`WITH_TOPOLVM=1` default image build
     #   option), the /dev/dm-* device must be shared with the container.
     echo "Running '${image_ref}'"
-    modprobe openvswitch || true
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        modprobe openvswitch || true
+    fi
 
     # Share the /dev directory with the container to enable TopoLVM CSI driver.
     # Mask the devices that may conflict with the host by sharing them on a
@@ -173,13 +176,15 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
         exit 1
     fi
 
-    if [ "$(id -u)" -ne 0 ]; then
+    if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+        local_rootful="$(sudo -u "${SUDO_USER}" podman machine inspect --format '{{.Rootful}}' 2>/dev/null || echo "false")"
+    else
         local_rootful="$(podman machine inspect --format '{{.Rootful}}' 2>/dev/null || echo "false")"
-        if [[ "${local_rootful}" != "true" ]]; then
-            echo "ERROR: Podman machine must be in rootful mode (required for MicroShift)."
-            echo "  podman machine stop && podman machine set --rootful && podman machine start"
-            exit 1
-        fi
+    fi
+    if [[ "${local_rootful}" != "true" ]]; then
+        echo "ERROR: Podman machine must be in rootful mode (required for MicroShift)."
+        echo "  podman machine stop && podman machine set --rootful && podman machine start"
+        exit 1
     fi
 else
     # Linux: must run as root
@@ -222,4 +227,4 @@ echo "To verify that MicroShift pods are up and running, run the following comma
 echo " - sudo podman exec -it ${CONTAINER_NAME} kubectl get pods -A"
 echo
 echo "To uninstall MicroShift, run the following command:"
-echo " - curl -s https://${OWNER}.github.io/${REPO}/quickclean.sh | sudo bash"
+echo " - curl -s https://${OWNER}.github.io/${REPO}/quickclean.sh | sudo bash -s ${CONTAINER_NAME}"
